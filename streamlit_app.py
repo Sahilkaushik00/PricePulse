@@ -217,20 +217,32 @@ with col1:
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("RUN INTELLIGENCE ENGINE", type="primary", use_container_width=True):
-        if not user_location or (not user_input and not image_input):
-            st.warning("⚠️ Location and Input required for localized optimization.")
+        st.write("🔄 *Triggering Engine...*")
+        if not user_location:
+            st.warning("⚠️ Please provide a checkout location.")
+        elif not user_input and not image_input:
+            st.warning("⚠️ Please provide a shopping list (text or image).")
         else:
-            with st.status("🚀 Intelligence Engine active...", expanded=True):
-                result = run_intelligence_engine(
-                    text=user_input, 
-                    image_bytes=curr_image_bytes, 
-                    location=user_location
-                )
-                if result:
-                    st.session_state.best_store = result
-                    st.success("✨ Optimization cycle finished!")
-                else:
-                    st.error("Engine failed to produce a valid optimization.")
+            # Check for API Key immediately
+            api_key = st.session_state.get("sidebar_api_key", "") or os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                st.error("❌ Gemini API Key is missing. Please enter it in the sidebar.")
+            else:
+                with st.status("🚀 Intelligence Engine active...", expanded=True) as status:
+                    result = run_intelligence_engine(
+                        text=user_input, 
+                        image_bytes=curr_image_bytes, 
+                        location=user_location
+                    )
+                    if result and isinstance(result, dict) and "bestPlatform" in result:
+                        st.session_state.best_store = result
+                        status.update(label="✨ Optimization complete!", state="complete", expanded=False)
+                        st.success("Analysis finished. Scroll right to see the report!")
+                        # Force a rerun to ensure the col2 updates immediately
+                        st.rerun()
+                    else:
+                        status.update(label="❌ Engine failed", state="error")
+                        st.error("The engine could not find a valid price comparison. Please check your list format.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
