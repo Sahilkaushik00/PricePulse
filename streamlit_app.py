@@ -179,8 +179,6 @@ Return ONLY valid JSON matching this schema:
     }}
   ]
 }}
-"""
-
     try:
         response = model.invoke(prompt)
         res_text = response.content
