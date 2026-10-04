@@ -78,7 +78,7 @@ st.markdown("""
         letter-spacing: 0.05em;
     }
 </style>
-""", unsafe_allow_stdio=True, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # --- Agent State ---
 class AgentState(TypedDict):
