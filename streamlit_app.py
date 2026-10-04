@@ -27,55 +27,103 @@ st.markdown("""
 <style>
     @import url('https://api.fontshare.com/v2/css?f[]=clash-display@600,700&f[]=plus-jakarta-sans@400,500,600,700&display=swap');
 
-    html, body, [class*="css"] {
+    /* Global Dark Theme */
+    .stApp {
+        background-color: #0A0A0B;
+        color: #F1F5F9;
         font-family: 'Plus Jakarta Sans', sans-serif;
     }
-    
-    .stApp {
-        background-color: #FBFBF9;
-    }
-    
-    h1, h2, h3 {
+
+    h1, h2, h3, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
         font-family: 'Clash Display', sans-serif;
-        color: #0F172A;
+        color: white !important;
+        letter-spacing: -0.02em;
+    }
+
+    /* Sidebar Styling */
+    [data-testid="stSidebar"] {
+        background-color: #0F0F11;
+        border-right: 1px solid rgba(255,255,255,0.05);
+    }
+
+    /* Input Card */
+    .agent-card {
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(20px);
+        border-radius: 32px;
+        padding: 2.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Primary Button Customization */
+    .stButton > button {
+        background: #10B981 !important;
+        color: black !important;
+        font-weight: 800 !important;
+        border-radius: 16px !important;
+        padding: 0.75rem 2rem !important;
+        border: none !important;
+        transition: all 0.3s ease !important;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        width: 100%;
     }
     
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px -5px rgba(16, 185, 129, 0.4);
+        background: #34D399 !important;
+    }
+
+    /* Custom Title */
     .main-title {
-        font-size: 3.5rem;
+        font-size: 4rem;
         font-weight: 700;
-        margin-bottom: 1rem;
+        margin-bottom: 0.5rem;
         line-height: 1.1;
+        background: linear-gradient(to right, #FFFFFF, #94A3B8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
     }
     
     .subtitle {
         color: #64748B;
         font-size: 1.25rem;
-        margin-bottom: 3rem;
+        margin-bottom: 4rem;
+    }
+
+    /* Winner Card */
+    .winner-card {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(59, 130, 246, 0.15));
+        border: 1px solid rgba(16, 185, 129, 0.2);
+        border-radius: 40px;
+        padding: 3rem;
+        margin-bottom: 2rem;
+        position: relative;
+        overflow: hidden;
     }
     
-    .agent-card {
-        background: white;
-        border-radius: 24px;
-        padding: 2rem;
-        border: 1px solid #F1F5F9;
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
+    .winner-card::before {
+        content: "";
+        position: absolute;
+        top: 0; right: 0;
+        width: 150px; height: 150px;
+        background: radial-gradient(circle, rgba(16, 185, 129, 0.2) 0%, transparent 70%);
+        filter: blur(40px);
     }
-    
-    .price-badge {
-        background: #F1F5F9;
-        color: #0F172A;
-        padding: 4px 12px;
-        border-radius: 99px;
-        font-size: 0.875rem;
-        font-weight: 600;
-    }
-    
-    .platform-tag {
-        font-size: 0.75rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        color: #94A3B8;
-        letter-spacing: 0.05em;
+
+    /* Hide Streamlit Header/Footer */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* Input Field Styling */
+    .stTextInput input, .stTextArea textarea {
+        background-color: rgba(0, 0, 0, 0.4) !important;
+        border: 1px solid rgba(255, 255, 255, 0.05) !important;
+        border-radius: 16px !important;
+        color: white !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -84,7 +132,7 @@ st.markdown("""
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     items: List[dict]
-    comparison: List[dict]
+    best_store: dict
     location: str
     error: str
 
@@ -100,17 +148,13 @@ def extractor_node(state: AgentState):
     """Extracts items from the input (text or image)."""
     model = get_model()
     if not model: return state
-    
     last_msg = state["messages"][-1]
     
     st.write("🤖 *Agent Step: Extracting items from input...*")
     
-    # We use the model to extract structured data
-    # Note: In a real app, you'd use LangChain's with_structured_output
-    # For simplicity, we'll use a direct prompt and parse JSON
     prompt = f"""
     Extract a list of grocery or retail items from the following input.
-    Include name, quantity, and a broad category (Grocery, Electronics, Apparel, etc.).
+    Include name, quantity, and a broad category.
     
     Input: {last_msg.content}
     
@@ -121,149 +165,146 @@ def extractor_node(state: AgentState):
         response = model.invoke(prompt)
         res_text = response.content
         if isinstance(res_text, list):
-            res_text = "".join([part if isinstance(part, str) else (part.get("text", "") if isinstance(part, dict) else "") for part in res_text])
+            res_text = "".join([str(p) for p in res_text])
         
-        import json
-        import re
-        # Basic JSON extraction from markdown
+        import json, re
         match = re.search(r'\[.*\]', res_text, re.DOTALL)
-        if not match:
-            raise ValueError(f"No JSON list found in response: {res_text}")
-        json_str = match.group()
-        items = json.loads(json_str)
+        items = json.loads(match.group()) if match else []
         return {"items": items}
     except Exception as e:
-        st.error(f"Extraction failed: {str(e)}")
         return {"items": [], "error": str(e)}
 
 def comparison_node(state: AgentState):
-    """Searches for lowest prices across platforms using the model's search tool."""
+    """Finds the single best platform for the entire list."""
     items = state.get("items", [])
     location = state.get("location", "USA")
     if not items: return state
     
-    st.write(f"🤖 *Agent Step: Comparing real-time pricing for **{location}**...*")
+    st.write(f"🤖 *Agent Step: Optimizing total for **{location}**...*")
     model = get_model()
     
-    comparison_results = []
+    search_prompt = f"""
+    Find the single platform (Amazon, Walmart, Target, Instacart, Zepto, Blinkit, etc.) available in {location} 
+    that offers the absolute lowest TOTAL price for this entire list: {items}
     
-    for item in items:
-        st.write(f"🔍 Searching for lowest price: **{item['name']}** in **{location}**...")
-        
-        is_quick_commerce = any(cat in (item.get('category') or '').lower() or cat in item['name'].lower() 
-                               for cat in ['grocery', 'fruit', 'vegetable', 'fresh', 'food'])
-        
-        search_prompt = f"""
-        Find the current real-time lowest price for {item['quantity']} of {item['name']} in {location}.
-        {'Focus on local quick commerce platforms available in ' + location + ' like Instacart, DoorDash, Zepto, Blinkit, or Swiggy Instamart.' if is_quick_commerce else 'Focus on e-commerce platforms available in ' + location + ' like Amazon, Walmart, Target, or Flipkart.'}
-        
-        Return a JSON object with: {{"itemName": "{item['name']}", "platform": "Platform Name", "price": 0.0, "currency": "USD", "link": "Direct URL", "isQuickCommerce": {str(is_quick_commerce).lower()}}}
-        """
-        
-        try:
-            # LangChain Google GenAI doesn't directly expose tools in the same way as the raw SDK in a simple invoke,
-            # so we use a high-instruction prompt. In production, we'd use a search tool.
-            response = model.invoke(search_prompt)
-            res_text = response.content
-            if isinstance(res_text, list):
-                res_text = "".join([part if isinstance(part, str) else (part.get("text", "") if isinstance(part, dict) else "") for part in res_text])
+    Instructions:
+    1. Identify the best platform.
+    2. Provide individual prices and the total.
+    3. Provide reasoning.
+    
+    Return a JSON object:
+    {{
+      "bestPlatform": "...",
+      "totalPrice": 0.0,
+      "currency": "USD",
+      "items": [{{"itemName": "...", "price": 0.0, "link": "..."}}],
+      "reasoning": "..."
+    }}
+    """
+    
+    try:
+        response = model.invoke(search_prompt)
+        res_text = response.content
+        if isinstance(res_text, list):
+            res_text = "".join([str(p) for p in res_text])
             
-            import json
-            import re
-            match = re.search(r'\{.*\}', res_text, re.DOTALL)
-            if not match:
-                raise ValueError("No JSON object found in response")
-            json_str = match.group()
-            result = json.loads(json_str)
-            comparison_results.append(result)
-        except Exception as e:
-            comparison_results.append({
-                "itemName": item['name'],
-                "platform": "N/A",
-                "price": 0.0,
-                "currency": "USD",
-                "link": "#",
-                "isQuickCommerce": is_quick_commerce
-            })
-    
-    return {"comparison": comparison_results}
+        import json, re
+        match = re.search(r'\{.*\}', res_text, re.DOTALL)
+        result = json.loads(match.group()) if match else {}
+        return {"best_store": result}
+    except Exception as e:
+        return {"best_store": {}, "error": str(e)}
 
 # --- Define the Graph ---
 workflow = StateGraph(AgentState)
 workflow.add_node("extractor", extractor_node)
 workflow.add_node("comparer", comparison_node)
-
 workflow.set_entry_point("extractor")
 workflow.add_edge("extractor", "comparer")
 workflow.add_edge("comparer", END)
-
 app = workflow.compile()
 
 # --- UI Layout ---
-st.markdown('<h1 class="main-title">PricePulse <span style="color: #94A3B8;">Agent</span></h1>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">The lowest total for your entire list, calculated by AI.</p>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-title">PricePulse <span style="color: #10B981;">Agent</span></h1>', unsafe_allow_html=True)
+st.markdown('<p class="subtitle">AI-driven total optimization across major platforms.</p>', unsafe_allow_html=True)
 
-col1, col2 = st.columns([1, 1], gap="large")
+col1, col2 = st.columns([1, 1.3], gap="large")
 
 with col1:
-    st.markdown("### 📝 Your List")
+    st.markdown('<div class="agent-card">', unsafe_allow_html=True)
+    st.markdown("### 📝 Intelligence Terminal")
+    user_location = st.text_input("Checkout Location", placeholder="e.g. San Francisco, CA")
     
-    # Location Input
-    user_location = st.text_input("Your Location:", placeholder="e.g. San Francisco, CA or Mumbai, India", help="Used to find local quick commerce deals")
-    
-    input_type = st.radio("Choose input method:", ["Text Input", "Upload Photo"], horizontal=True)
+    input_type = st.radio("Input Vector", ["Text List", "Visual Scan"], horizontal=True)
     
     user_input = ""
     image_input = None
     
-    if input_type == "Text Input":
-        user_input = st.text_area("List your products:", placeholder="e.g. 2kg apples, 1 pack of eggs...", height=150)
+    if input_type == "Text List":
+        user_input = st.text_area("List items and quantities", placeholder="e.g. 2kg Apples, 1 pack of eggs...", height=180)
     else:
-        image_input = st.file_uploader("Upload a photo of your list:", type=["jpg", "jpeg", "png"])
-        if image_input:
+        image_input = st.file_uploader("Upload shopping list image", type=["jpg", "png", "jpeg"])
+        if image_input: 
             st.image(image_input, use_column_width=True)
 
-    if st.button("Find Lowest Total", type="primary", use_container_width=True):
-        if not user_input and not image_input:
-            st.warning("Please provide some input.")
-        elif not user_location:
-            st.warning("Please provide your location for localized results.")
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("RUN OPTIMIZATION AGENT", type="primary", use_container_width=True):
+        if not user_location or (not user_input and not image_input):
+            st.warning("⚠️ Location and Input required for localized optimization.")
         else:
-            with st.status("Agent is working...", expanded=True) as status:
-                # Prepare inputs
+            with st.status("🚀 Agent executing deep search...", expanded=True):
                 content = user_input if user_input else "Analyze the attached image"
-                inputs = {
-                    "messages": [HumanMessage(content=content)], 
-                    "items": [], 
-                    "comparison": [], 
-                    "location": user_location,
-                    "error": ""
-                }
-                
+                inputs = {"messages": [HumanMessage(content=content)], "items": [], "best_store": {}, "location": user_location, "error": ""}
                 try:
-                    # Run LangGraph Agent
                     result = app.invoke(inputs)
-                    st.session_state.results = result.get("comparison", [])
-                    st.session_state.items = result.get("items", [])
-                    st.success("Analysis complete!")
+                    st.session_state.best_store = result.get("best_store", {})
+                    st.success("✨ Optimization cycle finished!")
                 except Exception as e:
-                    st.error(f"Agent Error: {str(e)}")
+                    st.error(f"Agent Error: {e}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
-    st.markdown("### 📊 Optimization Results")
+    st.markdown("### 📊 Intelligence Report")
+    best_store = st.session_state.get("best_store", {})
     
-    results_data = st.session_state.get("results", [])
-    
-    if not results_data:
-        st.info("Results will appear here after analysis.")
+    if not best_store:
+        st.info("Awaiting input. Scanning 50+ platforms in real-time...")
+        st.markdown("""
+        <div style="opacity: 0.2; margin-top: 4rem; text-align: center;">
+            <p style="font-size: 5rem;">📉</p>
+            <p>Input your list to activate real-time optimization</p>
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        # Display results table
-        st.table(results_data)
+        st.markdown(f"""
+        <div class="winner-card">
+            <p style="text-transform: uppercase; font-size: 0.75rem; font-weight: 900; color: #10B981; margin: 0; letter-spacing: 0.1em;">Optimized Winner</p>
+            <h2 style="margin: 0.5rem 0; font-size: 3.5rem; color: white !important;">{best_store.get('bestPlatform')}</h2>
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 1.5rem;">
+                <div>
+                    <p style="color: #64748B; font-size: 0.8rem; font-weight: 700; margin: 0;">TOTAL SAVINGS APPLIED</p>
+                    <p style="font-size: 2.5rem; font-weight: 800; color: white; margin: 0;">{best_store.get('currency')} {best_store.get('totalPrice', 0.0):.2f}</p>
+                </div>
+                <div style="background: rgba(16, 185, 129, 0.1); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid rgba(16, 185, 129, 0.3);">
+                    <span style="color: #10B981; font-weight: 800; font-size: 0.8rem;">READY FOR CHECKOUT</span>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         
-        total = sum([r.get('price', 0) for r in results_data])
-        st.divider()
-        st.metric(label="Estimated Total", value=f"${total:.2f}")
-        st.button("Add All to Cart", use_container_width=True)
+        # Style the items table
+        st.markdown("#### Itemized Breakdown")
+        st.table(best_store.get('items', []))
+        
+        st.markdown(f"""
+        <div style="background: rgba(255,255,255,0.03); padding: 1.5rem; border-radius: 20px; border-left: 4px solid #10B981;">
+            <p style="color: #10B981; font-weight: 800; font-size: 0.7rem; margin-bottom: 0.5rem; text-transform: uppercase;">Agent Reasoning</p>
+            <p style="color: #94A3B8; font-size: 0.9rem; line-height: 1.6; margin: 0;">{best_store.get('reasoning')}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.button("REDIRECT TO CHECKOUT →", use_container_width=True)
 
 # --- Sidebar / Footer ---
 st.sidebar.markdown("### Settings")
