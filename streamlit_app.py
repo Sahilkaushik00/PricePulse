@@ -94,93 +94,83 @@ def extractor_node(state: AgentState):
         return {"items": [], "error": str(e)}
 
 def comparison_node(state: AgentState):
-    """
-    Searches the live web using Tavily for real prices, then asks Gemini 
-    to extract and compare the totals across platforms.
-    """
     items = state.get("items", [])
-    location = state.get("location", "USA")
+    location = state.get("location", "India")
 
     if not items:
         return state
-        
+
     try:
         model = get_model()
         tavily_key = st.session_state.get("tavily_key") or os.getenv("TAVILY_API_KEY")
         if not tavily_key:
-            raise ValueError("Tavily API Key is missing. Please add it in the sidebar.")
+            raise ValueError("Tavily API Key missing.")
         tavily = TavilyClient(api_key=tavily_key)
     except Exception as e:
         return {"comparison": [], "error": str(e)}
 
-    # Determine candidate platforms based on item categories
     grocery_categories = ["grocery", "fruit", "vegetable", "fresh", "food"]
     is_grocery_list = all(
-        any(category in str(item.get("category", "")).lower() or category in str(item.get("name", "")).lower() for category in grocery_categories)
-        for item in items
+        any(c in str(i.get("category", "")).lower() or c in str(i.get("name", "")).lower() for c in grocery_categories)
+        for i in items
     )
-    platforms = ["Instacart", "DoorDash", "Zepto", "Blinkit", "Swiggy Instamart"] if is_grocery_list else ["Amazon", "Walmart", "Target", "Flipkart", "BigBasket"]
+    platforms = ["Blinkit", "Zepto", "Swiggy Instamart", "BigBasket"] if is_grocery_list else ["Amazon", "Flipkart", "Walmart"]
 
-    # --- NEW: LIVE WEB SEARCH STEP ---
-    st.write(f"🌐 *Agent Step: Searching live web for current prices in **{location}**...*")
+    # 1. SEARCH EACH PLATFORM INDIVIDUALLY FOR EXACT SNIPPETS
+    st.write(f"🌐 *Agent Step: Fetching live prices in **{location}**...*")
     search_contexts = []
-    
-    for item in items:
-        query = f"buy {item.get('quantity', '1')} {item.get('name', '')} price online {location} {' '.join(platforms)}"
-        try:
-            # max_results=3 keeps the LLM context window clean and focused
-            search_res = tavily.search(query=query, search_depth="basic", max_results=3)
-            context_str = f"\n--- Real Web Search Results for '{item.get('name')}' ---\n"
-            for res in search_res.get("results", []):
-                context_str += f"- Source: {res['url']}\n  Snippet: {res['content']}\n"
-            search_contexts.append(context_str)
-        except Exception as e:
-            st.warning(f"Tavily search failed for {item.get('name')}: {str(e)}")
-            
-    aggregated_context = "".join(search_contexts)
 
-    # --- LLM COMPARISON STEP ---
-    st.write("🤖 *Agent Step: Analyzing live search results to find the lowest complete basket...*")
-    
-    items_payload = json.dumps([{"name": i.get("name", ""), "quantity": i.get("quantity", ""), "category": i.get("category", "")} for i in items], ensure_ascii=False)
+    for item in items:
+        for platform in platforms:
+            # Focused search per platform
+            query = f"site price {platform} {item.get('quantity', '')} {item.get('name', '')} {location}"
+            try:
+                search_res = tavily.search(query=query, search_depth="basic", max_results=2)
+                for res in search_res.get("results", []):
+                    search_contexts.append(
+                        f"PLATFORM: {platform}\nITEM: {item.get('name')}\nURL: {res['url']}\nSNIPPET: {res['content']}\n---"
+                    )
+            except Exception as e:
+                st.warning(f"Search failed for {platform}: {str(e)}")
+
+    aggregated_context = "\n".join(search_contexts)
+
+    # 2. DEBUG VIEW: Inspect raw web data retrieved from Tavily
+    with st.expander("🔍 Debug: Inspect Raw Web Search Snippets"):
+        st.text_area("Raw Web Data", value=aggregated_context, height=200)
+
+    # 3. STRICT PROMPT (NO GUESSING ALLOWED)
+    st.write("🤖 *Agent Step: Extracting exact prices from search snippets...*")
+    items_payload = json.dumps([{"name": i.get("name", ""), "quantity": i.get("quantity", "")} for i in items])
 
     prompt = f"""
-You are a shopping comparison agent.
+You are a strict price-extraction engine.
 
-Location: {location}
-Requested shopping list:
+Shopping list:
 {items_payload}
 
-Candidate platforms: {", ".join(platforms)}
-
-======================
-LIVE WEB SEARCH RESULTS (TAVILY):
+Search Snippets:
 {aggregated_context}
-======================
 
-TASK:
-Based PRIMARILY on the live web search results above, find the current price of EVERY requested item on EVERY candidate platform where the item is available. 
+CRITICAL RULES:
+1. Extract prices ONLY if explicitly stated in the search snippets above.
+2. DO NOT estimate, guess, or hallucinate prices under any circumstances.
+3. If an explicit numerical price for an item on a platform is NOT found in the text, mark "available": false and "price": null.
+4. "price" must be a float reflecting the requested quantity.
 
-IMPORTANT RULES:
-- Extract prices and real product URLs from the search context where available. 
-- If a specific platform is missing from the search results, you may estimate the typical local price to ensure the comparison completes, but prioritize the real data.
-- "price" must be the TOTAL line-item price for the requested quantity.
-- Do not mix platforms. A platform is eligible only if ALL requested items are available on it.
-- If an item is totally unavailable on a platform, use available=false and price=null.
-
-Return ONLY valid JSON in exactly this structure:
+Return ONLY valid JSON:
 {{
   "offers": [
     {{
       "platform": "Platform Name",
-      "currency": "USD",
+      "currency": "INR",
       "items": [
         {{
           "itemName": "Requested item name",
           "quantity": "Requested quantity",
-          "price": 0.0,
+          "price": 80.0,
           "available": true,
-          "link": "Direct URL from search results if possible"
+          "link": "URL from snippet"
         }}
       ]
     }}
@@ -195,7 +185,7 @@ Return ONLY valid JSON in exactly this structure:
             res_text = "".join(p if isinstance(p, str) else p.get("text", "") if isinstance(p, dict) else "" for p in res_text)
 
         match = re.search(r"\{.*\}", res_text, re.DOTALL)
-        if not match: raise ValueError("No JSON object found in model response.")
+        if not match: raise ValueError("No JSON returned from model.")
 
         data = json.loads(match.group())
         offers = data.get("offers", [])
@@ -204,7 +194,7 @@ Return ONLY valid JSON in exactly this structure:
 
         for platform_data in offers:
             platform_name = str(platform_data.get("platform", "")).strip()
-            currency = str(platform_data.get("currency", "") or "USD").strip()
+            currency = str(platform_data.get("currency", "") or "INR").strip()
             if not platform_name or not isinstance(platform_data.get("items", []), list): continue
 
             offers_by_item = {str(o.get("itemName", "")).strip().lower(): o for o in platform_data.get("items", []) if isinstance(o, dict)}
@@ -212,11 +202,11 @@ Return ONLY valid JSON in exactly this structure:
             line_items, total, complete = [], 0.0, True
             for requested_name, requested_item in requested_items.items():
                 offer = offers_by_item.get(requested_name)
-                if not offer or not offer.get("available", False):
+                if not offer or not offer.get("available", False) or offer.get("price") is None:
                     complete = False; break
                 try:
                     line_price = float(offer.get("price"))
-                    if line_price < 0: raise ValueError
+                    if line_price <= 0: raise ValueError
                 except:
                     complete = False; break
                     
@@ -240,7 +230,7 @@ Return ONLY valid JSON in exactly this structure:
                 })
 
         if not platform_summaries:
-            raise ValueError("Based on the live data, no single platform could fulfill the complete list.")
+            raise ValueError("No single platform had complete, explicit live price data in the web search snippets.")
 
         platform_summaries.sort(key=lambda x: (x["total"], x["platform"].lower()))
         winner = platform_summaries[0]
@@ -253,7 +243,6 @@ Return ONLY valid JSON in exactly this structure:
     except Exception as e:
         st.error(f"Comparison failed: {str(e)}")
         return {"comparison": [], "platform_totals": [], "recommended_platform": "", "error": str(e)}
-
 # --- Define the Graph ---
 workflow = StateGraph(AgentState)
 workflow.add_node("extractor", extractor_node)
