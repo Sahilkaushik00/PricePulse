@@ -93,7 +93,13 @@ def extractor_node(state: AgentState):
         st.error(f"Extraction failed: {str(e)}")
         return {"items": [], "error": str(e)}
 
-def comparison_node(state: AgentState):
+import json
+import re
+import os
+import streamlit as st
+from tavily import TavilyClient
+
+def comparison_node(state: dict) -> dict:
     items = state.get("items", [])
     location = state.get("location", "India")
 
@@ -109,66 +115,69 @@ def comparison_node(state: AgentState):
     except Exception as e:
         return {"comparison": [], "error": str(e)}
 
-    grocery_categories = ["grocery", "fruit", "vegetable", "fresh", "food"]
+    # Determine platform set based on product type
+    grocery_categories = ["grocery", "fruit", "vegetable", "fresh", "food", "dairy"]
     is_grocery_list = all(
         any(c in str(i.get("category", "")).lower() or c in str(i.get("name", "")).lower() for c in grocery_categories)
         for i in items
     )
     platforms = ["Blinkit", "Zepto", "Swiggy Instamart", "BigBasket"] if is_grocery_list else ["Amazon", "Flipkart", "Walmart"]
 
-    # 1. SEARCH EACH PLATFORM INDIVIDUALLY FOR EXACT SNIPPETS
-    st.write(f"🌐 *Agent Step: Fetching live prices in **{location}**...*")
+    # Step 1: SEARCH INDIVIDUAL ITEMS ACROSS PLATFORMS
+    st.write(f"🌐 *Agent Step: Querying live prices item-by-item in **{location}**...*")
     search_contexts = []
 
     for item in items:
+        item_name = item.get("name", "")
+        item_qty = item.get("quantity", "")
+        
         for platform in platforms:
-            # Focused search per platform
-            query = f"site price {platform} {item.get('quantity', '')} {item.get('name', '')} {location}"
+            query = f'"{item_name}" {item_qty} price on {platform} {location}'
             try:
                 search_res = tavily.search(query=query, search_depth="basic", max_results=2)
                 for res in search_res.get("results", []):
                     search_contexts.append(
-                        f"PLATFORM: {platform}\nITEM: {item.get('name')}\nURL: {res['url']}\nSNIPPET: {res['content']}\n---"
+                        f"ITEM_QUERY: {item_name} | QTY: {item_qty}\n"
+                        f"PLATFORM: {platform}\n"
+                        f"URL: {res.get('url')}\n"
+                        f"SNIPPET: {res.get('content')}\n---"
                     )
-            except Exception as e:
-                st.warning(f"Search failed for {platform}: {str(e)}")
+            except Exception:
+                continue
 
     aggregated_context = "\n".join(search_contexts)
 
-    # 2. DEBUG VIEW: Inspect raw web data retrieved from Tavily
-    with st.expander("🔍 Debug: Inspect Raw Web Search Snippets"):
-        st.text_area("Raw Web Data", value=aggregated_context, height=200)
+    with st.expander("🔍 Debug: Raw Search Snippets (Item x Platform)"):
+        st.text_area("Search Context", value=aggregated_context, height=200)
 
-    # 3. STRICT PROMPT (NO GUESSING ALLOWED)
-    st.write("🤖 *Agent Step: Extracting exact prices from search snippets...*")
+    # Step 2: EXTRACT ITEM PRICE MATRIX USING LLM
+    st.write("🤖 *Agent Step: Parsing prices and building matrix...*")
     items_payload = json.dumps([{"name": i.get("name", ""), "quantity": i.get("quantity", "")} for i in items])
 
     prompt = f"""
-You are a strict price-extraction engine.
+You are an item price extraction model.
 
-Shopping list:
+Requested Items:
 {items_payload}
 
 Search Snippets:
 {aggregated_context}
 
-CRITICAL RULES:
-1. Extract prices ONLY if explicitly stated in the search snippets above.
-2. DO NOT estimate, guess, or hallucinate prices under any circumstances.
-3. If an explicit numerical price for an item on a platform is NOT found in the text, mark "available": false and "price": null.
-4. "price" must be a float reflecting the requested quantity.
+CRITICAL INSTRUCTIONS:
+1. Extract explicit price tags found for each requested item on each platform mentioned in snippets.
+2. If an item price is not strictly mentioned for a platform, omit it or set "available": false.
+3. "price" must be a float representing the total cost for the requested quantity in INR.
 
-Return ONLY valid JSON:
+Return ONLY valid JSON matching this schema:
 {{
-  "offers": [
+  "price_matrix": [
     {{
-      "platform": "Platform Name",
-      "currency": "INR",
-      "items": [
+      "itemName": "Item Name",
+      "quantity": "Quantity",
+      "platform_prices": [
         {{
-          "itemName": "Requested item name",
-          "quantity": "Requested quantity",
-          "price": 80.0,
+          "platform": "Platform Name",
+          "price": 50.0,
           "available": true,
           "link": "URL from snippet"
         }}
@@ -185,65 +194,90 @@ Return ONLY valid JSON:
             res_text = "".join(p if isinstance(p, str) else p.get("text", "") if isinstance(p, dict) else "" for p in res_text)
 
         match = re.search(r"\{.*\}", res_text, re.DOTALL)
-        if not match: raise ValueError("No JSON returned from model.")
+        if not match:
+            raise ValueError("No JSON matrix returned by LLM.")
 
-        data = json.loads(match.group())
-        offers = data.get("offers", [])
-        requested_items = {str(i.get("name", "")).strip().lower(): i for i in items}
-        platform_summaries = []
+        matrix_data = json.loads(match.group()).get("price_matrix", [])
 
-        for platform_data in offers:
-            platform_name = str(platform_data.get("platform", "")).strip()
-            currency = str(platform_data.get("currency", "") or "INR").strip()
-            if not platform_name or not isinstance(platform_data.get("items", []), list): continue
+        # Step 3: ANALYZE TOTALS & ITEM-LEVEL WINNERS
+        platform_totals = {p: {"platform": p, "total": 0.0, "found_count": 0, "items": []} for p in platforms}
+        item_analysis = []
+        split_cart_total = 0.0
 
-            offers_by_item = {str(o.get("itemName", "")).strip().lower(): o for o in platform_data.get("items", []) if isinstance(o, dict)}
-            
-            line_items, total, complete = [], 0.0, True
-            for requested_name, requested_item in requested_items.items():
-                offer = offers_by_item.get(requested_name)
-                if not offer or not offer.get("available", False) or offer.get("price") is None:
-                    complete = False; break
-                try:
-                    line_price = float(offer.get("price"))
-                    if line_price <= 0: raise ValueError
-                except:
-                    complete = False; break
-                    
-                total += line_price
-                line_items.append({
-                    "itemName": offer.get("itemName", requested_item.get("name", "")),
-                    "quantity": offer.get("quantity", requested_item.get("quantity", "")),
-                    "platform": platform_name,
-                    "price": line_price,
-                    "currency": currency,
-                    "link": offer.get("link", "#"),
+        for item_entry in matrix_data:
+            item_name = item_entry.get("itemName", "")
+            quantity = item_entry.get("quantity", "")
+            prices = item_entry.get("platform_prices", [])
+
+            valid_offers = [
+                p for p in prices 
+                if p.get("available") and isinstance(p.get("price"), (int, float)) and p.get("price") > 0
+            ]
+
+            if not valid_offers:
+                item_analysis.append({
+                    "itemName": item_name,
+                    "quantity": quantity,
+                    "cheapest_platform": "N/A",
+                    "best_price": None,
+                    "all_offers": []
                 })
+                continue
 
-            if complete and len(line_items) == len(requested_items):
-                platform_summaries.append({
-                    "platform": platform_name,
-                    "currency": currency,
-                    "total": total,
-                    "itemCount": len(line_items),
-                    "items": line_items,
-                })
+            # Sort offers to find cheapest platform for this specific item
+            valid_offers.sort(key=lambda x: x["price"])
+            best_offer = valid_offers[0]
 
-        if not platform_summaries:
-            raise ValueError("No single platform had complete, explicit live price data in the web search snippets.")
+            split_cart_total += best_offer["price"]
+            item_analysis.append({
+                "itemName": item_name,
+                "quantity": quantity,
+                "cheapest_platform": best_offer["platform"],
+                "best_price": best_offer["price"],
+                "all_offers": valid_offers
+            })
 
-        platform_summaries.sort(key=lambda x: (x["total"], x["platform"].lower()))
-        winner = platform_summaries[0]
+            # Accumulate totals per platform
+            for offer in valid_offers:
+                p_name = offer["platform"]
+                if p_name in platform_totals:
+                    platform_totals[p_name]["total"] += offer["price"]
+                    platform_totals[p_name]["found_count"] += 1
+                    platform_totals[p_name]["items"].append({
+                        "itemName": item_name,
+                        "quantity": quantity,
+                        "price": offer["price"],
+                        "link": offer.get("link", "#")
+                    })
+
+        # Filter out platforms with 0 items found
+        active_platforms = [p for p in platform_totals.values() if p["found_count"] > 0]
+
+        if not active_platforms:
+            raise ValueError("No explicit item prices could be verified from web search snippets.")
+
+        # Rank single platforms: 1. Most items found, 2. Lowest total cost
+        active_platforms.sort(key=lambda x: (-x["found_count"], x["total"]))
+        winning_platform = active_platforms[0]
 
         return {
-            "comparison": winner["items"],
-            "platform_totals": [{"platform": s["platform"], "currency": s["currency"], "total": s["total"], "itemCount": s["itemCount"]} for s in platform_summaries],
-            "recommended_platform": winner["platform"],
+            "item_analysis": item_analysis,                      # Individual item price breakdown
+            "platform_totals": active_platforms,                   # Total cost per platform
+            "recommended_platform": winning_platform["platform"], # Best single store option
+            "recommended_basket": winning_platform["items"],       # Basket items for winning store
+            "split_cart_total": round(split_cart_total, 2),       # Optimal total if buying item-by-item across stores
+            "total_requested": len(items)
         }
+
     except Exception as e:
-        st.error(f"Comparison failed: {str(e)}")
-        return {"comparison": [], "platform_totals": [], "recommended_platform": "", "error": str(e)}
-# --- Define the Graph ---
+        return {
+            "item_analysis": [],
+            "platform_totals": [],
+            "recommended_platform": "",
+            "recommended_basket": [],
+            "split_cart_total": 0.0,
+            "error": str(e)
+        }# --- Define the Graph ---
 workflow = StateGraph(AgentState)
 workflow.add_node("extractor", extractor_node)
 workflow.add_node("comparer", comparison_node)
