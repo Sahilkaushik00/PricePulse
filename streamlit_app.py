@@ -517,7 +517,49 @@ with col2:
             label="Lowest Complete Basket Total",
             value=f"{currency} {total:.2f}"
         )
-        st.button("Add All to Cart", use_container_width=True)
+
+        # A true cross-platform "add all to cart" action requires an
+        # authenticated, platform-specific cart API. Instead, open the
+        # winning platform directly using the best product URL returned by
+        # the comparison agent.
+        PLATFORM_HOME_URLS = {
+            "instacart": "https://www.instacart.com/",
+            "doordash": "https://www.doordash.com/",
+            "zepto": "https://www.zeptonow.com/",
+            "blinkit": "https://blinkit.com/",
+            "swiggy instamart": "https://www.swiggy.com/instamart",
+            "amazon": "https://www.amazon.com/",
+            "walmart": "https://www.walmart.com/",
+            "target": "https://www.target.com/",
+            "flipkart": "https://www.flipkart.com/",
+            "bigbasket": "https://www.bigbasket.com/",
+        }
+
+        def get_platform_url(platform_name, basket_rows):
+            # Prefer a direct product URL supplied by the agent.
+            for row in basket_rows:
+                link = row.get("link")
+                if isinstance(link, str) and link.startswith(("http://", "https://")):
+                    return link
+
+            # Fall back to the platform homepage if no product URL is available.
+            key = str(platform_name or "").strip().lower()
+            return PLATFORM_HOME_URLS.get(key, "#")
+
+        shopping_url = get_platform_url(recommended_platform, results_data)
+
+        if recommended_platform and shopping_url != "#":
+            st.link_button(
+                f"🛒 Shop on {recommended_platform} — Lowest Total",
+                shopping_url,
+                use_container_width=True,
+            )
+            st.caption(
+                "The basket is optimized for one platform. The button opens the winning platform; "
+                "you may need to add the listed items to its cart manually."
+            )
+        else:
+            st.warning("No valid platform link was returned for the recommended basket.")
 
 # --- Sidebar / Footer ---
 st.sidebar.markdown("### Settings")
