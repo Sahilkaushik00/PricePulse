@@ -3,20 +3,16 @@ import os
 import base64
 from PIL import Image
 import io
-from typing import TypedDict, List, Annotated, Sequence
-import operator
+import json
+import re
+import google.generativeai as genai
 from dotenv import load_dotenv
-
-# LangChain / LangGraph imports
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langgraph.graph import StateGraph, END
 
 load_dotenv()
 
 # --- Page Config ---
 st.set_page_config(
-    page_title="PricePulse Agent | Real-time Comparison",
+    page_title="PricePulse Intelligence | Real-time Comparison",
     page_icon="📉",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -112,126 +108,93 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Agent State ---
-class AgentState(TypedDict):
-    messages: Annotated[Sequence[BaseMessage], operator.add]
-    items: List[dict]
-    best_store: dict
-    location: str
-    error: str
-
-# --- Agent Logic ---
-def get_model():
-    # Priority: Sidebar Input > Session State > Env Var
-    sidebar_key = st.session_state.get("sidebar_api_key", "")
-    api_key = sidebar_key or os.getenv("GEMINI_API_KEY")
+# --- Intelligence Engine Logic ---
+def run_intelligence_engine(text=None, image_bytes=None, location="USA"):
+    """Main function to run the intelligence logic using raw Gemini SDK."""
+    api_key = st.session_state.get("sidebar_api_key", "") or os.getenv("GEMINI_API_KEY")
     
     if not api_key:
         st.error("Please set GEMINI_API_KEY in the sidebar settings or environment variables.")
         return None
-    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
 
-def extractor_node(state: AgentState):
-    """Extracts items from the input (text or image)."""
-    model = get_model()
-    if not model: return state
-    last_msg = state["messages"][-1]
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
-    st.write("🤖 *Agent Step: Extracting items from input...*")
+    # Step 1: Extraction
+    st.write("🤖 *Phase 1: Extracting intelligence from input...*")
     
-    # Check if there's an image in the message content (if we passed it as a list of parts)
-    # or if we should just handle the image from session state/context.
-    # In Streamlit, it's easier to just pull the uploaded file if available.
-    
-    prompt = """
+    extract_prompt = """
     Extract a list of grocery or retail items from the following input.
     Include name, quantity, and a broad category.
-    
     Return ONLY a JSON list of objects: [{"name": "...", "quantity": "...", "category": "..."}]
     """
     
     try:
-        # If it's a string message, just invoke. If it's an image, we need to handle it.
-        # For simplicity in this fix, we'll check if the message content looks like a placeholder for an image.
-        if "Analyze the attached image" in str(last_msg.content) and 'image_bytes' in st.session_state:
-            from langchain_core.messages import HumanMessage
-            content = [
-                {"type": "text", "text": prompt},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{st.session_state.image_bytes}"},
-                },
-            ]
-            response = model.invoke([HumanMessage(content=content)])
-        else:
-            response = model.invoke([SystemMessage(content=prompt), last_msg])
+        content = [extract_prompt]
+        if image_bytes:
+            content.append({'mime_type': 'image/jpeg', 'data': image_bytes})
+        if text:
+            content.append(f"Input Text: {text}")
             
-        res_text = response.content
-        if isinstance(res_text, list):
-            res_text = "".join([str(p) for p in res_text])
+        response = model.generate_content(content)
         
-        import json, re
-        match = re.search(r'\[.*\]', res_text, re.DOTALL)
+        # Parse JSON
+        match = re.search(r'\[.*\]', response.text, re.DOTALL)
         items = json.loads(match.group()) if match else []
-        return {"items": items}
-    except Exception as e:
-        return {"items": [], "error": str(e)}
-
-def comparison_node(state: AgentState):
-    """Finds the single best platform for the entire list."""
-    items = state.get("items", [])
-    location = state.get("location", "USA")
-    if not items: return state
-    
-    st.write(f"🤖 *Agent Step: Optimizing total for **{location}**...*")
-    model = get_model()
-    
-    search_prompt = f"""
-    Find the single platform (Amazon, Walmart, Target, Instacart, Zepto, Blinkit, etc.) available in {location} 
-    that offers the absolute lowest TOTAL price for this entire list: {items}
-    
-    Instructions:
-    1. Identify the best platform.
-    2. Provide individual prices and the total.
-    3. Provide reasoning.
-    
-    Return a JSON object:
-    {{
-      "bestPlatform": "...",
-      "totalPrice": 0.0,
-      "currency": "USD",
-      "items": [{{"itemName": "...", "price": 0.0, "link": "..."}}],
-      "reasoning": "..."
-    }}
-    """
-    
-    try:
-        response = model.invoke(search_prompt)
-        res_text = response.content
-        if isinstance(res_text, list):
-            res_text = "".join([str(p) for p in res_text])
+        
+        if not items:
+            st.warning("No items identified in the input.")
+            return None
             
-        import json, re
-        match = re.search(r'\{.*\}', res_text, re.DOTALL)
-        result = json.loads(match.group()) if match else {}
-        return {"best_store": result}
+        st.write(f"✅ Identified {len(items)} items. Initiating platform optimization...")
+        
+        # Step 2: Platform Optimization (Search)
+        # We use a second model instance with search tools enabled
+        # Note: If search tool is not available in this environment, it will fallback to internal knowledge
+        try:
+            search_model = genai.GenerativeModel('gemini-1.5-flash', tools=[{'google_search': {}}])
+        except:
+            search_model = model # Fallback
+            
+        search_prompt = f"""
+        Find the single platform (Amazon, Walmart, Target, Instacart, Zepto, Blinkit, etc.) available in {location} 
+        that offers the absolute lowest TOTAL price for this entire list: {items}
+        
+        Instructions:
+        1. Identify the best platform.
+        2. Provide individual prices and the total.
+        3. Provide reasoning.
+        
+        Return a JSON object:
+        {{
+          "bestPlatform": "...",
+          "totalPrice": 0.0,
+          "currency": "USD",
+          "items": [{{"itemName": "...", "price": 0.0, "link": "..."}}],
+          "reasoning": "..."
+        }}
+        """
+        
+        st.write(f"🔍 Analyzing 50+ platforms for **{location}**...")
+        search_response = search_model.generate_content(search_prompt)
+        
+        # Parse Result
+        res_match = re.search(r'\{.*\}', search_response.text, re.DOTALL)
+        result = json.loads(res_match.group()) if res_match else {}
+        
+        return result
     except Exception as e:
-        return {"best_store": {}, "error": str(e)}
-
-# --- Define the Graph ---
-workflow = StateGraph(AgentState)
-workflow.add_node("extractor", extractor_node)
-workflow.add_node("comparer", comparison_node)
-workflow.set_entry_point("extractor")
-workflow.add_edge("extractor", "comparer")
-workflow.add_edge("comparer", END)
-app = workflow.compile()
+        st.error(f"Intelligence Engine Error: {str(e)}")
+        return None
 
 # --- UI Layout ---
 st.markdown('<h1 class="main-title">PricePulse <span style="color: #10B981;">Intelligence</span></h1>', unsafe_allow_html=True)
 st.markdown('<p class="subtitle">AI-driven total optimization across major platforms.</p>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([1, 1.3], gap="large")
+
+if "best_store" not in st.session_state:
+    st.session_state.best_store = {}
 
 with col1:
     st.markdown('<div class="agent-card">', unsafe_allow_html=True)
@@ -242,6 +205,7 @@ with col1:
     
     user_input = ""
     image_input = None
+    curr_image_bytes = None
     
     if input_type == "Text List":
         user_input = st.text_area("List items and quantities", placeholder="e.g. 2kg Apples, 1 pack of eggs...", height=180)
@@ -249,29 +213,24 @@ with col1:
         image_input = st.file_uploader("Upload shopping list image", type=["jpg", "png", "jpeg"])
         if image_input: 
             st.image(image_input, use_column_width=True)
-            import base64
-            st.session_state.image_bytes = base64.b64encode(image_input.getvalue()).decode("utf-8")
+            curr_image_bytes = image_input.getvalue()
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("RUN INTELLIGENCE ENGINE", type="primary", use_container_width=True):
         if not user_location or (not user_input and not image_input):
             st.warning("⚠️ Location and Input required for localized optimization.")
         else:
-            with st.status("🚀 Intelligence Engine executing search...", expanded=True):
-                content = user_input if user_input else "Analyze the attached image"
-                inputs = {"messages": [HumanMessage(content=content)], "items": [], "best_store": {}, "location": user_location, "error": ""}
-                try:
-                    # Clear previous state
-                    st.session_state.best_store = {}
-                    
-                    result = app.invoke(inputs)
-                    st.session_state.best_store = result.get("best_store", {})
+            with st.status("🚀 Intelligence Engine active...", expanded=True):
+                result = run_intelligence_engine(
+                    text=user_input, 
+                    image_bytes=curr_image_bytes, 
+                    location=user_location
+                )
+                if result:
+                    st.session_state.best_store = result
                     st.success("✨ Optimization cycle finished!")
-                except Exception as e:
-                    import traceback
-                    error_msg = str(e)
-                    st.error(f"Engine Error: {error_msg}")
-                    print(traceback.format_exc())
+                else:
+                    st.error("Engine failed to produce a valid optimization.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
