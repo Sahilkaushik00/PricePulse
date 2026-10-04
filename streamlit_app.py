@@ -118,10 +118,17 @@ def extractor_node(state: AgentState):
     
     try:
         response = model.invoke(prompt)
+        res_text = response.content
+        if isinstance(res_text, list):
+            res_text = "".join([part if isinstance(part, str) else (part.get("text", "") if isinstance(part, dict) else "") for part in res_text])
+        
         import json
         import re
         # Basic JSON extraction from markdown
-        json_str = re.search(r'\[.*\]', response.content, re.DOTALL).group()
+        match = re.search(r'\[.*\]', res_text, re.DOTALL)
+        if not match:
+            raise ValueError(f"No JSON list found in response: {res_text}")
+        json_str = match.group()
         items = json.loads(json_str)
         return {"items": items}
     except Exception as e:
@@ -155,9 +162,16 @@ def comparison_node(state: AgentState):
             # LangChain Google GenAI doesn't directly expose tools in the same way as the raw SDK in a simple invoke,
             # so we use a high-instruction prompt. In production, we'd use a search tool.
             response = model.invoke(search_prompt)
+            res_text = response.content
+            if isinstance(res_text, list):
+                res_text = "".join([part if isinstance(part, str) else (part.get("text", "") if isinstance(part, dict) else "") for part in res_text])
+            
             import json
             import re
-            json_str = re.search(r'\{.*\}', response.content, re.DOTALL).group()
+            match = re.search(r'\{.*\}', res_text, re.DOTALL)
+            if not match:
+                raise ValueError("No JSON object found in response")
+            json_str = match.group()
             result = json.loads(json_str)
             comparison_results.append(result)
         except Exception as e:
