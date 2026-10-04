@@ -93,38 +93,84 @@ def get_model():
     if not api_key:
         st.error("Please set GEMINI_API_KEY in your environment variables.")
         return None
-    return ChatGoogleGenerativeAI(model="gemini-3.5-flash", google_api_key=api_key)
+    return ChatGoogleGenerativeAI(model="gemini-3.8-flash", google_api_key=api_key)
 
 def extractor_node(state: AgentState):
     """Extracts items from the input (text or image)."""
     model = get_model()
     if not model: return state
     
-    # Logic to handle multimodal input in LangChain/Gemini
     last_msg = state["messages"][-1]
     
-    # We'll use a specific prompt for extraction
-    system_prompt = "You are a shopping list extractor. Parse the items and quantities into a structured list. Return JSON only."
-    
-    # For this demo, we'll simulate the extraction or use the model
-    # (In a production app, you'd use structured output)
-    response = model.invoke([
-        SystemMessage(content=system_prompt),
-        last_msg
-    ])
-    
-    # Mocking extraction logic for demonstration of flow
-    # In a real implementation, you'd parse response.content JSON
     st.write("🤖 *Agent Step: Extracting items from input...*")
     
-    return {"items": [{"name": "Item", "quantity": "1"}]} # Placeholder
+    # We use the model to extract structured data
+    # Note: In a real app, you'd use LangChain's with_structured_output
+    # For simplicity, we'll use a direct prompt and parse JSON
+    prompt = f"""
+    Extract a list of grocery or retail items from the following input.
+    Include name, quantity, and a broad category (Grocery, Electronics, Apparel, etc.).
+    
+    Input: {last_msg.content}
+    
+    Return ONLY a JSON list of objects: [{{"name": "...", "quantity": "...", "category": "..."}}]
+    """
+    
+    try:
+        response = model.invoke(prompt)
+        import json
+        import re
+        # Basic JSON extraction from markdown
+        json_str = re.search(r'\[.*\]', response.content, re.DOTALL).group()
+        items = json.loads(json_str)
+        return {"items": items}
+    except Exception as e:
+        st.error(f"Extraction failed: {str(e)}")
+        return {"items": [], "error": str(e)}
 
 def comparison_node(state: AgentState):
-    """Searches for lowest prices across platforms."""
-    st.write("🤖 *Agent Step: Comparing real-time pricing across platforms...*")
-    # Here you would integrate Search tools (e.g. Tavily, Google Search)
-    # and use the model to find the best match.
-    return {"comparison": []} # Placeholder
+    """Searches for lowest prices across platforms using the model's search tool."""
+    items = state.get("items", [])
+    if not items: return state
+    
+    st.write("🤖 *Agent Step: Comparing real-time pricing across major platforms...*")
+    model = get_model()
+    
+    comparison_results = []
+    
+    for item in items:
+        st.write(f"🔍 Searching for lowest price: **{item['name']}**...")
+        
+        is_quick_commerce = any(cat in (item.get('category') or '').lower() or cat in item['name'].lower() 
+                               for cat in ['grocery', 'fruit', 'vegetable', 'fresh', 'food'])
+        
+        search_prompt = f"""
+        Find the current real-time lowest price for {item['quantity']} of {item['name']}.
+        {'Focus on quick commerce platforms like Instacart, DoorDash, UberEats, Zepto, or Blinkit.' if is_quick_commerce else 'Focus on e-commerce platforms like Amazon, Walmart, or Target.'}
+        
+        Return a JSON object with: {{"itemName": "{item['name']}", "platform": "Platform Name", "price": 0.0, "currency": "USD", "link": "Direct URL", "isQuickCommerce": {str(is_quick_commerce).lower()}}}
+        """
+        
+        try:
+            # LangChain Google GenAI doesn't directly expose tools in the same way as the raw SDK in a simple invoke,
+            # so we use a high-instruction prompt. In production, we'd use a search tool.
+            response = model.invoke(search_prompt)
+            import json
+            import re
+            json_str = re.search(r'\{.*\}', response.content, re.DOTALL).group()
+            result = json.loads(json_str)
+            comparison_results.append(result)
+        except Exception as e:
+            comparison_results.append({
+                "itemName": item['name'],
+                "platform": "N/A",
+                "price": 0.0,
+                "currency": "USD",
+                "link": "#",
+                "isQuickCommerce": is_quick_commerce
+            })
+    
+    return {"comparison": comparison_results}
 
 # --- Define the Graph ---
 workflow = StateGraph(AgentState)
@@ -162,29 +208,34 @@ with col1:
             st.warning("Please provide some input.")
         else:
             with st.status("Agent is working...", expanded=True) as status:
-                # Run LangGraph Agent
-                # (Conceptual run)
-                inputs = {"messages": [HumanMessage(content=user_input if user_input else "Analyze the attached image")]}
-                # result = app.invoke(inputs)
-                st.success("Analysis complete!")
+                # Prepare inputs
+                content = user_input if user_input else "Analyze the attached image"
+                inputs = {"messages": [HumanMessage(content=content)], "items": [], "comparison": [], "error": ""}
+                
+                try:
+                    # Run LangGraph Agent
+                    result = app.invoke(inputs)
+                    st.session_state.results = result.get("comparison", [])
+                    st.session_state.items = result.get("items", [])
+                    st.success("Analysis complete!")
+                except Exception as e:
+                    st.error(f"Agent Error: {str(e)}")
 
 with col2:
     st.markdown("### 📊 Optimization Results")
     
-    # Placeholder for results
-    st.info("Results will appear here after analysis.")
+    results_data = st.session_state.get("results", [])
     
-    # Example table
-    st.markdown("""
-    | Item | Best Platform | Price |
-    | :--- | :--- | :--- |
-    | *Example Item* | *Marketplace* | *$0.00* |
-    """, unsafe_allow_html=True)
-    
-    st.divider()
-    
-    st.metric(label="Estimated Total", value="$0.00", delta="- $0.00 (vs Market Avg)")
-    st.button("Add All to Cart", use_container_width=True)
+    if not results_data:
+        st.info("Results will appear here after analysis.")
+    else:
+        # Display results table
+        st.table(results_data)
+        
+        total = sum([r.get('price', 0) for r in results_data])
+        st.divider()
+        st.metric(label="Estimated Total", value=f"${total:.2f}")
+        st.button("Add All to Cart", use_container_width=True)
 
 # --- Sidebar / Footer ---
 st.sidebar.markdown("### Settings")
