@@ -56,7 +56,7 @@ def get_model():
     if not api_key:
         raise ValueError("Please set GEMINI_API_KEY in the sidebar or environment variables.")
     # Note: Updated to 'gemini-1.5-flash' as 3.8 does not exist yet!
-    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
+    return ChatGoogleGenerativeAI(model="gemini-3.5-flash", google_api_key=api_key)
 
 def extractor_node(state: AgentState):
     """Extracts items from the input (text or image)."""
