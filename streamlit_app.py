@@ -26,20 +26,14 @@ st.set_page_config(
 st.sidebar.markdown("### ⚙️ Settings")
 st.sidebar.text_input("Gemini API Key", type="password", placeholder="Enter Gemini key...", key="gemini_key")
 st.sidebar.text_input("Tavily API Key", type="password", placeholder="Enter Tavily key...", key="tavily_key")
-st.sidebar.info("Get your free search API key at [tavily.com](https://tavily.com)")
+st.sidebar.info("Get your search API key at [tavily.com](https://tavily.com)")
 
 # --- Custom Styling ---
 st.markdown("""
 <style>
-    @import url('https://api.fontshare.com/v2/css?f[]=clash-display@600,700&f[]=plus-jakarta-sans@400,500,600,700&display=swap');
-    html, body, [class*="css"] { font-family: 'Plus Jakarta Sans', sans-serif; }
-    .stApp { background-color: #FBFBF9; }
-    h1, h2, h3 { font-family: 'Clash Display', sans-serif; color: #0F172A; }
-    .main-title { font-size: 3.5rem; font-weight: 700; margin-bottom: 1rem; line-height: 1.1; }
-    .subtitle { color: #64748B; font-size: 1.25rem; margin-bottom: 3rem; }
-</style>
-""", unsafe_allow_html=True)
+    @It looks like the results or output didn't display on your end. 
 
+Could you let me know what you were looking for or re-state your question? I'll re-run it and get those results right up for you.
 # --- Agent State ---
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
