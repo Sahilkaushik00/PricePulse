@@ -27,38 +27,38 @@ st.markdown("""
 <style>
     @import url('https://api.fontshare.com/v2/css?f[]=clash-display@600,700&f[]=plus-jakarta-sans@400,500,600,700&display=swap');
 
-    /* Global Dark Theme */
+    /* Global Light Theme */
     .stApp {
-        background-color: #0E1117;
-        color: #FFFFFF;
+        background-color: #F8FAFC;
+        color: #0F172A;
         font-family: 'Plus Jakarta Sans', sans-serif;
     }
 
     h1, h2, h3, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
         font-family: 'Clash Display', sans-serif;
-        color: #FFFFFF !important;
+        color: #0F172A !important;
         letter-spacing: -0.02em;
     }
 
     /* Sidebar Styling */
     [data-testid="stSidebar"] {
-        background-color: #161B22;
-        border-right: 1px solid rgba(255,255,255,0.1);
+        background-color: #FFFFFF;
+        border-right: 1px solid #E2E8F0;
     }
 
     /* Input Card */
     .agent-card {
-        background: #1C2128;
+        background: #FFFFFF;
         border-radius: 24px;
         padding: 2rem;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        border: 1px solid #E2E8F0;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.02);
     }
 
     /* Primary Button Customization */
     .stButton > button {
         background: #10B981 !important;
-        color: #000000 !important;
+        color: #FFFFFF !important;
         font-weight: 700 !important;
         border-radius: 12px !important;
         padding: 0.6rem 2rem !important;
@@ -67,8 +67,9 @@ st.markdown("""
     }
     
     .stButton > button:hover {
-        background: #34D399 !important;
+        background: #059669 !important;
         transform: scale(1.02);
+        box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.3);
     }
 
     /* Custom Title */
@@ -76,35 +77,37 @@ st.markdown("""
         font-size: 3.5rem;
         font-weight: 700;
         margin-bottom: 0.5rem;
-        color: #FFFFFF;
+        color: #0F172A;
     }
     
     .subtitle {
-        color: #8B949E;
+        color: #64748B;
         font-size: 1.1rem;
         margin-bottom: 3rem;
     }
 
     /* Winner Card */
     .winner-card {
-        background: linear-gradient(135deg, #1C2128 0%, #161B22 100%);
+        background: linear-gradient(135deg, #F0FDF4 0%, #EFF6FF 100%);
         border: 2px solid #10B981;
         border-radius: 24px;
         padding: 2rem;
         margin-bottom: 2rem;
+        color: #064E3B;
     }
 
-    /* Input Field Styling overrides for visibility */
+    /* Input Field Styling */
     .stTextInput input, .stTextArea textarea {
-        color: white !important;
-        background-color: #0D1117 !important;
+        color: #0F172A !important;
+        background-color: #FFFFFF !important;
+        border: 1px solid #E2E8F0 !important;
     }
 
     /* Info/Warning boxes */
     .stAlert {
-        background-color: #161B22 !important;
-        color: white !important;
-        border: 1px solid rgba(255,255,255,0.1) !important;
+        background-color: #F1F5F9 !important;
+        color: #0F172A !important;
+        border: 1px solid #E2E8F0 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -259,15 +262,15 @@ with col2:
     else:
         st.markdown(f"""
         <div class="winner-card">
-            <p style="text-transform: uppercase; font-size: 0.75rem; font-weight: 900; color: #10B981; margin: 0; letter-spacing: 0.1em;">Optimized Winner</p>
-            <h2 style="margin: 0.5rem 0; font-size: 3.5rem; color: white !important;">{best_store.get('bestPlatform')}</h2>
+            <p style="text-transform: uppercase; font-size: 0.75rem; font-weight: 900; color: #059669; margin: 0; letter-spacing: 0.1em;">Optimized Winner</p>
+            <h2 style="margin: 0.5rem 0; font-size: 3.5rem; color: #064E3B !important;">{best_store.get('bestPlatform')}</h2>
             <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 1.5rem;">
                 <div>
                     <p style="color: #64748B; font-size: 0.8rem; font-weight: 700; margin: 0;">TOTAL SAVINGS APPLIED</p>
-                    <p style="font-size: 2.5rem; font-weight: 800; color: white; margin: 0;">{best_store.get('currency')} {best_store.get('totalPrice', 0.0):.2f}</p>
+                    <p style="font-size: 2.5rem; font-weight: 800; color: #064E3B; margin: 0;">{best_store.get('currency')} {best_store.get('totalPrice', 0.0):.2f}</p>
                 </div>
                 <div style="background: rgba(16, 185, 129, 0.1); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid rgba(16, 185, 129, 0.3);">
-                    <span style="color: #10B981; font-weight: 800; font-size: 0.8rem;">READY FOR CHECKOUT</span>
+                    <span style="color: #059669; font-weight: 800; font-size: 0.8rem;">READY FOR CHECKOUT</span>
                 </div>
             </div>
         </div>
