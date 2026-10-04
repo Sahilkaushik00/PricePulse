@@ -98,7 +98,7 @@ def get_model():
     if not api_key:
         st.error("Please set GEMINI_API_KEY in your environment variables.")
         return None
-    return ChatGoogleGenerativeAI(model="gemini-3.8-flash", google_api_key=api_key)
+    return ChatGoogleGenerativeAI(model="gemini-3.5-flash", google_api_key=api_key)
 
 def extractor_node(state: AgentState):
     """Extracts items from the input (text or image)."""
