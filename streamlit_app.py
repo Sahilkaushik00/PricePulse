@@ -29,101 +29,82 @@ st.markdown("""
 
     /* Global Dark Theme */
     .stApp {
-        background-color: #0A0A0B;
-        color: #F1F5F9;
+        background-color: #0E1117;
+        color: #FFFFFF;
         font-family: 'Plus Jakarta Sans', sans-serif;
     }
 
     h1, h2, h3, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
         font-family: 'Clash Display', sans-serif;
-        color: white !important;
+        color: #FFFFFF !important;
         letter-spacing: -0.02em;
     }
 
     /* Sidebar Styling */
     [data-testid="stSidebar"] {
-        background-color: #0F0F11;
-        border-right: 1px solid rgba(255,255,255,0.05);
+        background-color: #161B22;
+        border-right: 1px solid rgba(255,255,255,0.1);
     }
 
     /* Input Card */
     .agent-card {
-        background: rgba(255, 255, 255, 0.03);
-        backdrop-filter: blur(20px);
-        border-radius: 32px;
-        padding: 2.5rem;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        background: #1C2128;
+        border-radius: 24px;
+        padding: 2rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
     }
 
     /* Primary Button Customization */
     .stButton > button {
         background: #10B981 !important;
-        color: black !important;
-        font-weight: 800 !important;
-        border-radius: 16px !important;
-        padding: 0.75rem 2rem !important;
+        color: #000000 !important;
+        font-weight: 700 !important;
+        border-radius: 12px !important;
+        padding: 0.6rem 2rem !important;
         border: none !important;
-        transition: all 0.3s ease !important;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        width: 100%;
+        transition: all 0.2s ease !important;
     }
     
     .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 20px -5px rgba(16, 185, 129, 0.4);
         background: #34D399 !important;
+        transform: scale(1.02);
     }
 
     /* Custom Title */
     .main-title {
-        font-size: 4rem;
+        font-size: 3.5rem;
         font-weight: 700;
         margin-bottom: 0.5rem;
-        line-height: 1.1;
-        background: linear-gradient(to right, #FFFFFF, #94A3B8);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+        color: #FFFFFF;
     }
     
     .subtitle {
-        color: #64748B;
-        font-size: 1.25rem;
-        margin-bottom: 4rem;
+        color: #8B949E;
+        font-size: 1.1rem;
+        margin-bottom: 3rem;
     }
 
     /* Winner Card */
     .winner-card {
-        background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(59, 130, 246, 0.15));
-        border: 1px solid rgba(16, 185, 129, 0.2);
-        border-radius: 40px;
-        padding: 3rem;
+        background: linear-gradient(135deg, #1C2128 0%, #161B22 100%);
+        border: 2px solid #10B981;
+        border-radius: 24px;
+        padding: 2rem;
         margin-bottom: 2rem;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .winner-card::before {
-        content: "";
-        position: absolute;
-        top: 0; right: 0;
-        width: 150px; height: 150px;
-        background: radial-gradient(circle, rgba(16, 185, 129, 0.2) 0%, transparent 70%);
-        filter: blur(40px);
     }
 
-    /* Hide Streamlit Header/Footer */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-
-    /* Input Field Styling */
+    /* Input Field Styling overrides for visibility */
     .stTextInput input, .stTextArea textarea {
-        background-color: rgba(0, 0, 0, 0.4) !important;
-        border: 1px solid rgba(255, 255, 255, 0.05) !important;
-        border-radius: 16px !important;
         color: white !important;
+        background-color: #0D1117 !important;
+    }
+
+    /* Info/Warning boxes */
+    .stAlert {
+        background-color: #161B22 !important;
+        color: white !important;
+        border: 1px solid rgba(255,255,255,0.1) !important;
     }
 </style>
 """, unsafe_allow_html=True)
