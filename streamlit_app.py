@@ -1,14 +1,11 @@
 import streamlit as st
 import os
 import base64
-from PIL import Image
-import io
 import json
 import re
-import google.generativeai as genai
-from dotenv import load_dotenv
-
-load_dotenv()
+import urllib.request
+import urllib.error
+import io
 
 # --- Page Config ---
 st.set_page_config(
@@ -23,7 +20,6 @@ st.markdown("""
 <style>
     @import url('https://api.fontshare.com/v2/css?f[]=clash-display@600,700&f[]=plus-jakarta-sans@400,500,600,700&display=swap');
 
-    /* Global Light Theme */
     .stApp {
         background-color: #F8FAFC;
         color: #0F172A;
@@ -36,13 +32,11 @@ st.markdown("""
         letter-spacing: -0.02em;
     }
 
-    /* Sidebar Styling */
     [data-testid="stSidebar"] {
         background-color: #FFFFFF;
         border-right: 1px solid #E2E8F0;
     }
 
-    /* Input Card */
     .agent-card {
         background: #FFFFFF;
         border-radius: 24px;
@@ -51,7 +45,6 @@ st.markdown("""
         box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.02);
     }
 
-    /* Primary Button Customization */
     .stButton > button {
         background: #10B981 !important;
         color: #FFFFFF !important;
@@ -68,7 +61,6 @@ st.markdown("""
         box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.3);
     }
 
-    /* Custom Title */
     .main-title {
         font-size: 3.5rem;
         font-weight: 700;
@@ -82,7 +74,6 @@ st.markdown("""
         margin-bottom: 3rem;
     }
 
-    /* Winner Card */
     .winner-card {
         background: linear-gradient(135deg, #F0FDF4 0%, #EFF6FF 100%);
         border: 2px solid #10B981;
@@ -92,14 +83,12 @@ st.markdown("""
         color: #064E3B;
     }
 
-    /* Input Field Styling */
     .stTextInput input, .stTextArea textarea {
         color: #0F172A !important;
         background-color: #FFFFFF !important;
         border: 1px solid #E2E8F0 !important;
     }
 
-    /* Info/Warning boxes */
     .stAlert {
         background-color: #F1F5F9 !important;
         color: #0F172A !important;
@@ -108,38 +97,63 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Intelligence Engine Logic ---
+# --- Zero-Dependency Intelligence Engine Logic ---
+def call_gemini(api_key, prompt, image_base64=None, image_mime=None, tools=None):
+    """Calls Gemini API using built-in urllib."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    
+    parts = [{"text": prompt}]
+    if image_base64:
+        parts.append({
+            "inline_data": {
+                "mime_type": image_mime or "image/jpeg",
+                "data": image_base64
+            }
+        })
+    
+    payload = {
+        "contents": [{"parts": parts}]
+    }
+    
+    if tools:
+        payload["tools"] = tools
+
+    headers = {"Content-Type": "application/json"}
+    
+    try:
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
+        with urllib.request.urlopen(req) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            return res_data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+    except Exception as e:
+        raise Exception(f"Gemini API Call Failed: {str(e)}")
+
 def run_intelligence_engine(text=None, image_bytes=None, location="USA"):
-    """Main function to run the intelligence logic using raw Gemini SDK."""
+    """Main engine logic using urllib for maximum compatibility."""
     api_key = st.session_state.get("sidebar_api_key", "") or os.getenv("GEMINI_API_KEY")
     
     if not api_key:
         st.error("Please set GEMINI_API_KEY in the sidebar settings or environment variables.")
         return None
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    
     # Step 1: Extraction
     st.write("🤖 *Phase 1: Extracting intelligence from input...*")
     
     extract_prompt = """
-    Extract a list of grocery or retail items from the following input.
+    Extract a list of grocery or retail items from the input.
     Include name, quantity, and a broad category.
     Return ONLY a JSON list of objects: [{"name": "...", "quantity": "...", "category": "..."}]
     """
     
     try:
-        content = [extract_prompt]
         if image_bytes:
-            content.append({'mime_type': 'image/jpeg', 'data': image_bytes})
-        if text:
-            content.append(f"Input Text: {text}")
+            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+            res_text = call_gemini(api_key, extract_prompt + (f"\nInput Text: {text}" if text else ""), image_b64)
+        else:
+            res_text = call_gemini(api_key, extract_prompt + f"\nInput Text: {text}")
             
-        response = model.generate_content(content)
-        
         # Parse JSON
-        match = re.search(r'\[.*\]', response.text, re.DOTALL)
+        match = re.search(r'\[.*\]', res_text, re.DOTALL)
         items = json.loads(match.group()) if match else []
         
         if not items:
@@ -149,13 +163,6 @@ def run_intelligence_engine(text=None, image_bytes=None, location="USA"):
         st.write(f"✅ Identified {len(items)} items. Initiating platform optimization...")
         
         # Step 2: Platform Optimization (Search)
-        # We use a second model instance with search tools enabled
-        # Note: If search tool is not available in this environment, it will fallback to internal knowledge
-        try:
-            search_model = genai.GenerativeModel('gemini-1.5-flash', tools=[{'google_search': {}}])
-        except:
-            search_model = model # Fallback
-            
         search_prompt = f"""
         Find the single platform (Amazon, Walmart, Target, Instacart, Zepto, Blinkit, etc.) available in {location} 
         that offers the absolute lowest TOTAL price for this entire list: {items}
@@ -176,10 +183,15 @@ def run_intelligence_engine(text=None, image_bytes=None, location="USA"):
         """
         
         st.write(f"🔍 Analyzing 50+ platforms for **{location}**...")
-        search_response = search_model.generate_content(search_prompt)
+        # Note: Tools might be restricted in some environments, so we try with search tool but handle fallback
+        try:
+            tools = [{"google_search": {}}]
+            search_text = call_gemini(api_key, search_prompt, tools=tools)
+        except:
+            search_text = call_gemini(api_key, search_prompt)
         
         # Parse Result
-        res_match = re.search(r'\{.*\}', search_response.text, re.DOTALL)
+        res_match = re.search(r'\{.*\}', search_text, re.DOTALL)
         result = json.loads(res_match.group()) if res_match else {}
         
         return result
@@ -217,32 +229,23 @@ with col1:
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("RUN INTELLIGENCE ENGINE", type="primary", use_container_width=True):
-        st.write("🔄 *Triggering Engine...*")
         if not user_location:
             st.warning("⚠️ Please provide a checkout location.")
         elif not user_input and not image_input:
-            st.warning("⚠️ Please provide a shopping list (text or image).")
+            st.warning("⚠️ Please provide a shopping list.")
         else:
-            # Check for API Key immediately
-            api_key = st.session_state.get("sidebar_api_key", "") or os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                st.error("❌ Gemini API Key is missing. Please enter it in the sidebar.")
-            else:
-                with st.status("🚀 Intelligence Engine active...", expanded=True) as status:
-                    result = run_intelligence_engine(
-                        text=user_input, 
-                        image_bytes=curr_image_bytes, 
-                        location=user_location
-                    )
-                    if result and isinstance(result, dict) and "bestPlatform" in result:
-                        st.session_state.best_store = result
-                        status.update(label="✨ Optimization complete!", state="complete", expanded=False)
-                        st.success("Analysis finished. Scroll right to see the report!")
-                        # Force a rerun to ensure the col2 updates immediately
-                        st.rerun()
-                    else:
-                        status.update(label="❌ Engine failed", state="error")
-                        st.error("The engine could not find a valid price comparison. Please check your list format.")
+            with st.status("🚀 Intelligence Engine active...", expanded=True) as status:
+                result = run_intelligence_engine(
+                    text=user_input, 
+                    image_bytes=curr_image_bytes, 
+                    location=user_location
+                )
+                if result and isinstance(result, dict) and "bestPlatform" in result:
+                    st.session_state.best_store = result
+                    status.update(label="✨ Optimization complete!", state="complete", expanded=False)
+                    st.rerun()
+                else:
+                    status.update(label="❌ Engine failed", state="error")
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
@@ -274,7 +277,6 @@ with col2:
         </div>
         """, unsafe_allow_html=True)
         
-        # Style the items table
         st.markdown("#### Itemized Breakdown")
         st.table(best_store.get('items', []))
         
