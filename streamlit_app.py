@@ -100,9 +100,9 @@ st.markdown("""
 # --- Zero-Dependency Intelligence Engine Logic ---
 def call_gemini(api_key, prompt, image_base64=None, image_mime=None, tools=None):
     """Calls Gemini API using built-in urllib."""
-    # Using v1beta for tool support or v1 for standard generation
+    # Using v1beta for maximum model and tool compatibility
     model_name = "gemini-1.5-flash"
-    url = f"https://generativelanguage.googleapis.com/v1/models/{model_name}:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
     
     parts = [{"text": prompt}]
     if image_base64:
@@ -118,9 +118,7 @@ def call_gemini(api_key, prompt, image_base64=None, image_mime=None, tools=None)
     }
     
     if tools:
-        # The correct tool format for the raw API is different from the SDK
-        # Correct Part: tools: [{"google_search_retrieval": { "dynamic_retrieval_config": { "mode": "MODE_DYNAMIC", "dynamic_threshold": 0.3 } }}]
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        # Correct Part: tools: [{"google_search_retrieval": {}}]
         payload["tools"] = [{"google_search_retrieval": {}}]
 
     headers = {"Content-Type": "application/json"}
@@ -129,7 +127,6 @@ def call_gemini(api_key, prompt, image_base64=None, image_mime=None, tools=None)
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
         with urllib.request.urlopen(req) as response:
             res_data = json.loads(response.read().decode("utf-8"))
-            # Debug: st.write(res_data)
             candidates = res_data.get("candidates", [])
             if not candidates:
                 raise Exception(f"API Error: No candidates returned. {json.dumps(res_data)}")
