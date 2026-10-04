@@ -85,6 +85,7 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     items: List[dict]
     comparison: List[dict]
+    location: str
     error: str
 
 # --- Agent Logic ---
@@ -138,22 +139,23 @@ def extractor_node(state: AgentState):
 def comparison_node(state: AgentState):
     """Searches for lowest prices across platforms using the model's search tool."""
     items = state.get("items", [])
+    location = state.get("location", "USA")
     if not items: return state
     
-    st.write("🤖 *Agent Step: Comparing real-time pricing across major platforms...*")
+    st.write(f"🤖 *Agent Step: Comparing real-time pricing for **{location}**...*")
     model = get_model()
     
     comparison_results = []
     
     for item in items:
-        st.write(f"🔍 Searching for lowest price: **{item['name']}**...")
+        st.write(f"🔍 Searching for lowest price: **{item['name']}** in **{location}**...")
         
         is_quick_commerce = any(cat in (item.get('category') or '').lower() or cat in item['name'].lower() 
                                for cat in ['grocery', 'fruit', 'vegetable', 'fresh', 'food'])
         
         search_prompt = f"""
-        Find the current real-time lowest price for {item['quantity']} of {item['name']}.
-        {'Focus on quick commerce platforms like Instacart, DoorDash, UberEats, Zepto, or Blinkit.' if is_quick_commerce else 'Focus on e-commerce platforms like Amazon, Walmart, or Target.'}
+        Find the current real-time lowest price for {item['quantity']} of {item['name']} in {location}.
+        {'Focus on local quick commerce platforms available in ' + location + ' like Instacart, DoorDash, Zepto, Blinkit, or Swiggy Instamart.' if is_quick_commerce else 'Focus on e-commerce platforms available in ' + location + ' like Amazon, Walmart, Target, or Flipkart.'}
         
         Return a JSON object with: {{"itemName": "{item['name']}", "platform": "Platform Name", "price": 0.0, "currency": "USD", "link": "Direct URL", "isQuickCommerce": {str(is_quick_commerce).lower()}}}
         """
@@ -205,6 +207,10 @@ col1, col2 = st.columns([1, 1], gap="large")
 
 with col1:
     st.markdown("### 📝 Your List")
+    
+    # Location Input
+    user_location = st.text_input("Your Location:", placeholder="e.g. San Francisco, CA or Mumbai, India", help="Used to find local quick commerce deals")
+    
     input_type = st.radio("Choose input method:", ["Text Input", "Upload Photo"], horizontal=True)
     
     user_input = ""
@@ -220,11 +226,19 @@ with col1:
     if st.button("Find Lowest Total", type="primary", use_container_width=True):
         if not user_input and not image_input:
             st.warning("Please provide some input.")
+        elif not user_location:
+            st.warning("Please provide your location for localized results.")
         else:
             with st.status("Agent is working...", expanded=True) as status:
                 # Prepare inputs
                 content = user_input if user_input else "Analyze the attached image"
-                inputs = {"messages": [HumanMessage(content=content)], "items": [], "comparison": [], "error": ""}
+                inputs = {
+                    "messages": [HumanMessage(content=content)], 
+                    "items": [], 
+                    "comparison": [], 
+                    "location": user_location,
+                    "error": ""
+                }
                 
                 try:
                     # Run LangGraph Agent
