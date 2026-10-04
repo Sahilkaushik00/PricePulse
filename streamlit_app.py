@@ -122,11 +122,14 @@ class AgentState(TypedDict):
 
 # --- Agent Logic ---
 def get_model():
-    api_key = os.getenv("GEMINI_API_KEY")
+    # Priority: Sidebar Input > Session State > Env Var
+    sidebar_key = st.session_state.get("sidebar_api_key", "")
+    api_key = sidebar_key or os.getenv("GEMINI_API_KEY")
+    
     if not api_key:
-        st.error("Please set GEMINI_API_KEY in your environment variables.")
+        st.error("Please set GEMINI_API_KEY in the sidebar settings or environment variables.")
         return None
-    return ChatGoogleGenerativeAI(model="gemini-3.8-flash", google_api_key=api_key)
+    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
 
 def extractor_node(state: AgentState):
     """Extracts items from the input (text or image)."""
@@ -136,17 +139,33 @@ def extractor_node(state: AgentState):
     
     st.write("🤖 *Agent Step: Extracting items from input...*")
     
-    prompt = f"""
+    # Check if there's an image in the message content (if we passed it as a list of parts)
+    # or if we should just handle the image from session state/context.
+    # In Streamlit, it's easier to just pull the uploaded file if available.
+    
+    prompt = """
     Extract a list of grocery or retail items from the following input.
     Include name, quantity, and a broad category.
     
-    Input: {last_msg.content}
-    
-    Return ONLY a JSON list of objects: [{{"name": "...", "quantity": "...", "category": "..."}}]
+    Return ONLY a JSON list of objects: [{"name": "...", "quantity": "...", "category": "..."}]
     """
     
     try:
-        response = model.invoke(prompt)
+        # If it's a string message, just invoke. If it's an image, we need to handle it.
+        # For simplicity in this fix, we'll check if the message content looks like a placeholder for an image.
+        if "Analyze the attached image" in str(last_msg.content) and 'image_bytes' in st.session_state:
+            from langchain_core.messages import HumanMessage
+            content = [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{st.session_state.image_bytes}"},
+                },
+            ]
+            response = model.invoke([HumanMessage(content=content)])
+        else:
+            response = model.invoke([SystemMessage(content=prompt), last_msg])
+            
         res_text = response.content
         if isinstance(res_text, list):
             res_text = "".join([str(p) for p in res_text])
@@ -209,7 +228,7 @@ workflow.add_edge("comparer", END)
 app = workflow.compile()
 
 # --- UI Layout ---
-st.markdown('<h1 class="main-title">PricePulse <span style="color: #10B981;">Agent</span></h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-title">PricePulse <span style="color: #10B981;">Intelligence</span></h1>', unsafe_allow_html=True)
 st.markdown('<p class="subtitle">AI-driven total optimization across major platforms.</p>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([1, 1.3], gap="large")
@@ -230,21 +249,29 @@ with col1:
         image_input = st.file_uploader("Upload shopping list image", type=["jpg", "png", "jpeg"])
         if image_input: 
             st.image(image_input, use_column_width=True)
+            import base64
+            st.session_state.image_bytes = base64.b64encode(image_input.getvalue()).decode("utf-8")
 
     st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("RUN OPTIMIZATION AGENT", type="primary", use_container_width=True):
+    if st.button("RUN INTELLIGENCE ENGINE", type="primary", use_container_width=True):
         if not user_location or (not user_input and not image_input):
             st.warning("⚠️ Location and Input required for localized optimization.")
         else:
-            with st.status("🚀 Agent executing deep search...", expanded=True):
+            with st.status("🚀 Intelligence Engine executing search...", expanded=True):
                 content = user_input if user_input else "Analyze the attached image"
                 inputs = {"messages": [HumanMessage(content=content)], "items": [], "best_store": {}, "location": user_location, "error": ""}
                 try:
+                    # Clear previous state
+                    st.session_state.best_store = {}
+                    
                     result = app.invoke(inputs)
                     st.session_state.best_store = result.get("best_store", {})
                     st.success("✨ Optimization cycle finished!")
                 except Exception as e:
-                    st.error(f"Agent Error: {e}")
+                    import traceback
+                    error_msg = str(e)
+                    st.error(f"Engine Error: {error_msg}")
+                    print(traceback.format_exc())
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
@@ -291,6 +318,8 @@ with col2:
         st.button("REDIRECT TO CHECKOUT →", use_container_width=True)
 
 # --- Sidebar / Footer ---
-st.sidebar.markdown("### Settings")
-st.sidebar.text_input("Gemini API Key", type="password", placeholder="Enter your key...")
-st.sidebar.info("This key is used for the LangGraph agent processing.")
+st.sidebar.markdown("### Engine Settings")
+st.sidebar.text_input("Gemini API Key", type="password", placeholder="Enter your key...", key="sidebar_api_key")
+st.sidebar.info("This key is used for the LangGraph intelligence processing. It is not stored on our servers.")
+st.sidebar.divider()
+st.sidebar.markdown("© 2026 PricePulse Intelligence Corp")
