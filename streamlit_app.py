@@ -5,6 +5,8 @@ from PIL import Image
 import io
 from typing import TypedDict, List, Annotated, Sequence
 import operator
+import json
+import re
 from dotenv import load_dotenv
 
 # LangChain / LangGraph imports
@@ -17,7 +19,7 @@ load_dotenv()
 # --- Page Config ---
 st.set_page_config(
     page_title="PricePulse Agent | Real-time Comparison",
-    page_icon="📉",
+    page_icon="🛍️",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -84,7 +86,7 @@ st.markdown("""
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     items: List[dict]
-    comparison: List[dict]
+    best_platform: dict
     location: str
     error: str
 
@@ -105,9 +107,6 @@ def extractor_node(state: AgentState):
     
     st.write("🤖 *Agent Step: Extracting items from input...*")
     
-    # We use the model to extract structured data
-    # Note: In a real app, you'd use LangChain's with_structured_output
-    # For simplicity, we'll use a direct prompt and parse JSON
     prompt = f"""
     Extract a list of grocery or retail items from the following input.
     Include name, quantity, and a broad category (Grocery, Electronics, Apparel, etc.).
@@ -123,9 +122,6 @@ def extractor_node(state: AgentState):
         if isinstance(res_text, list):
             res_text = "".join([part if isinstance(part, str) else (part.get("text", "") if isinstance(part, dict) else "") for part in res_text])
         
-        import json
-        import re
-        # Basic JSON extraction from markdown
         match = re.search(r'\[.*\]', res_text, re.DOTALL)
         if not match:
             raise ValueError(f"No JSON list found in response: {res_text}")
@@ -137,56 +133,59 @@ def extractor_node(state: AgentState):
         return {"items": [], "error": str(e)}
 
 def comparison_node(state: AgentState):
-    """Searches for lowest prices across platforms using the model's search tool."""
+    """Calculates total basket cost per platform and finds the single platform with the lowest total."""
     items = state.get("items", [])
     location = state.get("location", "USA")
     if not items: return state
     
-    st.write(f"🤖 *Agent Step: Comparing real-time pricing for **{location}**...*")
+    st.write(f"🤖 *Agent Step: Finding the platform with the lowest total price in **{location}**...*")
     model = get_model()
     
-    comparison_results = []
+    items_summary = ", ".join([f"{item['quantity']} of {item['name']}" for item in items])
     
-    for item in items:
-        st.write(f"🔍 Searching for lowest price: **{item['name']}** in **{location}**...")
+    search_prompt = f"""
+    You are given a shopping list with the following items: {items_summary}.
+    Target location: {location}.
+    
+    Compare the combined total price for ALL items across popular platforms operating in {location} (e.g., Instacart, Walmart, Amazon, Target, Blinkit, Swiggy Instamart, Zepto, Flipkart).
+    
+    Determine WHICH SINGLE PLATFORM gives the lowest overall total cost for the entire basket.
+    
+    Return ONLY a single JSON object formatted exactly as follows:
+    {{
+        "platform": "Platform Name",
+        "total_price": 0.0,
+        "currency": "USD",
+        "platform_link": "https://www.example.com",
+        "item_breakdown": [
+            {{"itemName": "Item Name", "quantity": "1", "estimated_price": 0.0}}
+        ]
+    }}
+    """
+    
+    try:
+        response = model.invoke(search_prompt)
+        res_text = response.content
+        if isinstance(res_text, list):
+            res_text = "".join([part if isinstance(part, str) else (part.get("text", "") if isinstance(part, dict) else "") for part in res_text])
         
-        is_quick_commerce = any(cat in (item.get('category') or '').lower() or cat in item['name'].lower() 
-                               for cat in ['grocery', 'fruit', 'vegetable', 'fresh', 'food'])
-        
-        search_prompt = f"""
-        Find the current real-time lowest price for {item['quantity']} of {item['name']} in {location}.
-        {'Focus on local quick commerce platforms available in ' + location + ' like Instacart, DoorDash, Zepto, Blinkit, or Swiggy Instamart.' if is_quick_commerce else 'Focus on e-commerce platforms available in ' + location + ' like Amazon, Walmart, Target, or Flipkart.'}
-        
-        Return a JSON object with: {{"itemName": "{item['name']}", "platform": "Platform Name", "price": 0.0, "currency": "USD", "link": "Direct URL", "isQuickCommerce": {str(is_quick_commerce).lower()}}}
-        """
-        
-        try:
-            # LangChain Google GenAI doesn't directly expose tools in the same way as the raw SDK in a simple invoke,
-            # so we use a high-instruction prompt. In production, we'd use a search tool.
-            response = model.invoke(search_prompt)
-            res_text = response.content
-            if isinstance(res_text, list):
-                res_text = "".join([part if isinstance(part, str) else (part.get("text", "") if isinstance(part, dict) else "") for part in res_text])
-            
-            import json
-            import re
-            match = re.search(r'\{.*\}', res_text, re.DOTALL)
-            if not match:
-                raise ValueError("No JSON object found in response")
-            json_str = match.group()
-            result = json.loads(json_str)
-            comparison_results.append(result)
-        except Exception as e:
-            comparison_results.append({
-                "itemName": item['name'],
+        match = re.search(r'\{.*\}', res_text, re.DOTALL)
+        if not match:
+            raise ValueError("No JSON object found in response")
+        json_str = match.group()
+        result = json.loads(json_str)
+        return {"best_platform": result}
+    except Exception as e:
+        return {
+            "best_platform": {
                 "platform": "N/A",
-                "price": 0.0,
+                "total_price": 0.0,
                 "currency": "USD",
-                "link": "#",
-                "isQuickCommerce": is_quick_commerce
-            })
-    
-    return {"comparison": comparison_results}
+                "platform_link": "#",
+                "item_breakdown": []
+            },
+            "error": str(e)
+        }
 
 # --- Define the Graph ---
 workflow = StateGraph(AgentState)
@@ -206,11 +205,9 @@ st.markdown('<p class="subtitle">The lowest total for your entire list, calculat
 col1, col2 = st.columns([1, 1], gap="large")
 
 with col1:
-    st.markdown("### 📝 Your List")
+    st.markdown("### 📋 Your List")
     
-    # Location Input
     user_location = st.text_input("Your Location:", placeholder="e.g. San Francisco, CA or Mumbai, India", help="Used to find local quick commerce deals")
-    
     input_type = st.radio("Choose input method:", ["Text Input", "Upload Photo"], horizontal=True)
     
     user_input = ""
@@ -223,47 +220,68 @@ with col1:
         if image_input:
             st.image(image_input, use_column_width=True)
 
-    if st.button("Find Lowest Total", type="primary", use_container_width=True):
+    if st.button("Find Lowest Total Platform", type="primary", use_container_width=True):
         if not user_input and not image_input:
             st.warning("Please provide some input.")
         elif not user_location:
             st.warning("Please provide your location for localized results.")
         else:
             with st.status("Agent is working...", expanded=True) as status:
-                # Prepare inputs
                 content = user_input if user_input else "Analyze the attached image"
                 inputs = {
                     "messages": [HumanMessage(content=content)], 
                     "items": [], 
-                    "comparison": [], 
+                    "best_platform": {}, 
                     "location": user_location,
                     "error": ""
                 }
                 
                 try:
-                    # Run LangGraph Agent
                     result = app.invoke(inputs)
-                    st.session_state.results = result.get("comparison", [])
+                    st.session_state.best_platform = result.get("best_platform", {})
                     st.session_state.items = result.get("items", [])
                     st.success("Analysis complete!")
                 except Exception as e:
                     st.error(f"Agent Error: {str(e)}")
 
 with col2:
-    st.markdown("### 📊 Optimization Results")
+    st.markdown("### 🏷️ Best Platform Deal")
     
-    results_data = st.session_state.get("results", [])
+    best_platform = st.session_state.get("best_platform", {})
     
-    if not results_data:
+    if not best_platform:
         st.info("Results will appear here after analysis.")
     else:
-        # Display results table
-        st.table(results_data)
+        platform = best_platform.get("platform", "N/A")
+        total_price = best_platform.get("total_price", 0.0)
+        currency = best_platform.get("currency", "USD")
+        platform_link = best_platform.get("platform_link", "#")
+        breakdown = best_platform.get("item_breakdown", [])
         
-        total = sum([r.get('price', 0) for r in results_data])
+        # Display Best Platform Card
+        st.markdown(f"""
+        <div class="agent-card">
+            <span class="platform-tag">Lowest Total Cost Platform</span>
+            <h2 style="margin-top: 0.5rem; margin-bottom: 0.2rem;">{platform}</h2>
+            <p style="color: #64748B; font-size: 0.95rem;">Lowest overall total for all items combined in your list.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.write("")
+        if breakdown:
+            st.markdown("#### Basket Breakdown")
+            st.table(breakdown)
+        
         st.divider()
-        st.metric(label="Estimated Total", value=f"${total:.2f}")
-        st.button("Add All to Cart", use_container_width=True)
+        
+        symbol = "₹" if currency.upper() in ["INR", "RS"] else "$"
+        st.metric(label=f"Total Cost on {platform}", value=f"{symbol}{total_price:.2f}")
+        
+        st.write("")
+        
+        # Add to Cart Button & Platform Link underneath
+        st.link_button(f"🛒 Add to Cart on {platform}", url=platform_link, use_container_width=True)
+        st.markdown(f"🔗 **Platform Link:** [{platform_link}]({platform_link})")
 
 # --- Sidebar / Footer ---
 st.sidebar.markdown("### Settings")
